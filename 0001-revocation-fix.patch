@@ -1,0 +1,84 @@
+diff --git a/keystone/contrib/revoke/backends/kvs.py b/keystone/contrib/revoke/backends/kvs.py
+index 086becb..93c4493 100644
+--- a/keystone/contrib/revoke/backends/kvs.py
++++ b/keystone/contrib/revoke/backends/kvs.py
+@@ -72,3 +72,6 @@ class Revoke(revoke.RevokeDriverV8):
+                 if revoked_at > oldest:
+                     pruned.append(event)
+             self._store.set(_EVENT_KEY, pruned, lock)
++
++    def check_max_entry(self):
++        return None
+diff --git a/keystone/contrib/revoke/backends/sql.py b/keystone/contrib/revoke/backends/sql.py
+index 82e0519..6c9c2d7 100644
+--- a/keystone/contrib/revoke/backends/sql.py
++++ b/keystone/contrib/revoke/backends/sql.py
+@@ -12,6 +12,8 @@
+
+ import uuid
+
++from sqlalchemy.sql import func
++
+ from keystone.common import sql
+ from keystone.contrib import revoke
+ from keystone.contrib.revoke import model
+@@ -102,3 +104,11 @@ class Revoke(revoke.RevokeDriverV8):
+         with session.begin():
+             session.add(record)
+         self._prune_expired_events()
++
++    def check_max_entry(self):
++        session = sql.get_session()
++        query = session.query(func.max(RevocationEvent.revoked_at)
++                              .label("revoked_at"))
++        result = query.one()
++        max_revoked_at = result.revoked_at
++        return max_revoked_at
+diff --git a/keystone/contrib/revoke/core.py b/keystone/contrib/revoke/core.py
+index 3b108c9..b20edc6 100644
+--- a/keystone/contrib/revoke/core.py
++++ b/keystone/contrib/revoke/core.py
+@@ -76,6 +76,8 @@ class Manager(manager.Manager):
+     """
+
+     driver_namespace = 'keystone.revoke'
++    revoke_tree = None
++    last_fetch = datetime.datetime(0o001, 0o1, 0o1, 0, 0, 0)
+
+     def __init__(self):
+         super(Manager, self).__init__(CONF.revoke.driver)
+@@ -206,12 +208,20 @@ class Manager(manager.Manager):
+     def revoke_by_domain_role_assignment(self, domain_id, role_id):
+         self.revoke(model.RevokeEvent(domain_id=domain_id, role_id=role_id))
+
+-    @MEMOIZE
+     def _get_revoke_tree(self):
+-        events = self.driver.list_events()
+-        revoke_tree = model.RevokeTree(revoke_events=events)
+-
+-        return revoke_tree
++        max_revoked_at = None
++        if self.revoke_tree is not None:
++            max_revoked_at = self.driver.check_max_entry()
++        if self.revoke_tree is None or (max_revoked_at is None or
++                                        max_revoked_at > self.last_fetch):
++            events = self.driver.list_events()
++            self.revoke_tree = model.RevokeTree(revoke_events=events)
++            if max_revoked_at is not None:
++                self.last_fetch = max_revoked_at
++        return self.revoke_tree
++
++    def invalidate_tree(self):
++        self.revoke_tree = None
+
+     def check_token(self, token_values):
+         """Checks the values from a token against the revocation list
+@@ -228,7 +238,7 @@ class Manager(manager.Manager):
+
+     def revoke(self, event):
+         self.driver.revoke(event)
+-        self._get_revoke_tree.invalidate(self)
++        self.invalidate_tree()
+
+
+ @six.add_metaclass(abc.ABCMeta)

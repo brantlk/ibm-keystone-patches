@@ -1,0 +1,15 @@
+diff --git a/setup.cfg b/setup.cfg
+index 7788537..354b450 100644
+--- a/setup.cfg
++++ b/setup.cfg
+@@ -19,6 +19,10 @@ classifier =
+ [files]
+ packages =
+     keystone
++data_files =
++    www/ = httpd/keystone.py
++    etc/httpd/conf.d/ = httpd/wsgi-keystone.conf
++    etc/ = etc/*
+
+ [extras]
+ ldap =
